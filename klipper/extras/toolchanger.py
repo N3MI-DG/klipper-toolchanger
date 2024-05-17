@@ -11,7 +11,8 @@ import ast, bisect
 STATUS_UNINITALIZED = 'uninitialized'
 STATUS_INITIALIZING = 'initializing'
 STATUS_READY = 'ready'
-STATUS_CHANGING = 'changing'
+STATUS_DOCKING = 'docking'
+STATUS_SELECTING = 'selecting'
 STATUS_ERROR = 'error'
 INIT_ON_HOME = 0
 INIT_MANUAL = 1
@@ -215,7 +216,7 @@ class Toolchanger:
     cmd_SELECT_TOOL_ERROR_help = "Abort tool change and mark the active toolchanger as failed"
 
     def cmd_SELECT_TOOL_ERROR(self, gcmd):
-        if self.status != STATUS_CHANGING and self.status != STATUS_INITIALIZING:
+        if self.status != STATUS_SELECTING and self.status != STATUS_INITIALIZING:
             gcmd.respond_info(
                 'SELECT_TOOL_ERROR called while not selecting, doing nothing')
             return
@@ -241,8 +242,8 @@ class Toolchanger:
         self.test_tool_selection(gcmd, restore_axis)
 
     def initialize(self, select_tool=None):
-        if self.status == STATUS_CHANGING:
-            raise Exception('Cannot initialize while changing tools')
+        if self.status in [STATUS_DOCKING, STATUS_SELECTING]:
+            raise Exception('Cannot initialize while %s tools' % self.status)
 
         # Initialize may be called from within the intialize gcode
         # to set active tool without performing a full change
@@ -283,8 +284,6 @@ class Toolchanger:
                 'Tool %s already selected' % tool.name if tool else None)
                 return
 
-            self.status = STATUS_CHANGING
-
         gcode_position = self.gcode_move.get_status()['gcode_position']
 
         extra_context = {
@@ -297,18 +296,28 @@ class Toolchanger:
         }
 
         self.gcode.run_script_from_command(
-            "SAVE_GCODE_STATE NAME=_toolchange_state")
+            "SAVE_GCODE_STATE NAME=_docking_state")
 
         if not force_pickup:
           self.run_gcode('before_change_gcode',
                          self.before_change_gcode, extra_context)
         self.gcode.run_script_from_command("SET_GCODE_OFFSET X=0.0 Y=0.0 Z=0.0")
 
+        self.status = STATUS_DOCKING
+
         if not force_pickup and self.active_tool:
            self.run_gcode('tool.dropoff_gcode',
                           self.active_tool.dropoff_gcode, extra_context)
 
+        self.gcode.run_script_from_command(
+            "RESTORE_GCODE_STATE NAME=_docking_state MOVE=0")
+
+        self.status = STATUS_SELECTING
         self._configure_toolhead_for_tool(tool)
+
+        self.gcode.run_script_from_command(
+            "SAVE_GCODE_STATE NAME=_selecting_state")
+
         if tool is not None:
             self.run_gcode('tool.pickup_gcode',
                            tool.pickup_gcode, extra_context)
@@ -318,7 +327,7 @@ class Toolchanger:
         self._restore_axis(gcode_position, restore_axis, tool)
 
         self.gcode.run_script_from_command(
-            "RESTORE_GCODE_STATE NAME=_toolchange_state MOVE=0")
+            "RESTORE_GCODE_STATE NAME=_selecting_state MOVE=0")
         # Restore state sets old gcode offsets, fix that.
         if tool is not None:
             self._set_tool_gcode_offset(tool)
@@ -339,7 +348,6 @@ class Toolchanger:
         if not tool:
             raise gcmd.error("Cannot test tool, no active tool")
 
-        self.status = STATUS_CHANGING
         gcode_position = self.gcode_move.get_status()['gcode_position']
         extra_context = {
             'dropoff_tool': self.active_tool.name if self.active_tool else None,
@@ -350,8 +358,11 @@ class Toolchanger:
 
         self.gcode.run_script_from_command("SET_GCODE_OFFSET X=0.0 Y=0.0 Z=0.0")
 
+        self.status = STATUS_DOCKING
         self.run_gcode('tool.dropoff_gcode',
                        self.active_tool.dropoff_gcode, extra_context)
+
+        self.status = STATUS_SELECTING
         self.run_gcode('tool.pickup_gcode',
                        tool.pickup_gcode, extra_context)
 
