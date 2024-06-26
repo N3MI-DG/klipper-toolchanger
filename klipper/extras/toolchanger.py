@@ -7,6 +7,7 @@
 # Contribution 2024 by Justin F. Hallett <thesin@southofheaven.org>
 
 import ast, bisect
+from gcode import Coord
 
 STATUS_UNINITALIZED = 'uninitialized'
 STATUS_INITIALIZING = 'initializing'
@@ -167,8 +168,11 @@ class Toolchanger:
             if not tool:
                 raise gcmd.error("Select tool: TOOL=%s not found" % (tool_name))
             restore_axis = gcmd.get('RESTORE_AXIS', tool.t_command_restore_axis)
+            restore_x = gcmd.get('RESTORE_X', None)
+            restore_y = gcmd.get('RESTORE_Y', None)
+            restore_z = gcmd.get('RESTORE_Z', None)
             force_pickup = gcmd.get('FORCE_PICKUP', None)
-            self.select_tool(gcmd, tool, restore_axis, force_pickup)
+            self.select_tool(gcmd, tool, restore_axis, restore_x, restore_y, restore_z, force_pickup)
             return
         tool_nr = gcmd.get_int('T', None)
         if tool_nr is not None:
@@ -176,8 +180,11 @@ class Toolchanger:
             if not tool:
                 raise gcmd.error("Select tool: T%d not found" % (tool_nr))
             restore_axis = gcmd.get('RESTORE_AXIS', tool.t_command_restore_axis)
+            restore_x = gcmd.get('RESTORE_X', None)
+            restore_y = gcmd.get('RESTORE_Y', None)
+            restore_z = gcmd.get('RESTORE_Z', None)
             force_pickup = gcmd.get('FORCE_PICKUP', None)
-            self.select_tool(gcmd, tool, restore_axis, force_pickup)
+            self.select_tool(gcmd, tool, restore_axis, restore_x, restore_y, restore_z, force_pickup)
             return
         raise gcmd.error("Select tool: Either TOOL or T needs to be specified")
 
@@ -267,8 +274,15 @@ class Toolchanger:
                 raise self.gcode.error('%s failed to initialize, error: %s' %
                                        (self.name, self.error_message))
 
-    def select_tool(self, gcmd, tool, restore_axis, force_pickup):
+    def select_tool(self, gcmd, tool, restore_axis, restore_x=None, restore_y=None, restore_z=None, force_pickup=None):
         self.ensure_homed(gcmd)
+        gcode_position = self.gcode_move.get_status()['gcode_position']
+
+        def _construct_restore_position():
+            x = float(restore_x) if restore_x is not None else gcode_position.x
+            y = float(restore_y) if restore_y is not None else gcode_position.y
+            z = float(restore_z) if restore_z is not None else gcode_position.z
+            return Coord(x, y, z, e=0)
 
         if not force_pickup:
             if self.status == STATUS_UNINITALIZED and self.initialize_on == INIT_FIRST_USE:
@@ -285,13 +299,13 @@ class Toolchanger:
 
             self.status = STATUS_CHANGING
 
-        gcode_position = self.gcode_move.get_status()['gcode_position']
+        restore_position = _construct_restore_position()
 
         extra_context = {
             'dropoff_tool': self.active_tool.name if self.active_tool else None,
             'pickup_tool': tool.name if tool else None,
             'restore_position': self._position_with_tool_offset(
-                gcode_position, restore_axis, tool),
+                restore_position, restore_axis, tool),
             'start_position': self._position_with_tool_offset(
                 gcode_position, 'xyz', tool)
         }
@@ -315,7 +329,7 @@ class Toolchanger:
             self.run_gcode('after_change_gcode',
                            self.after_change_gcode, extra_context)
 
-        self._restore_axis(gcode_position, restore_axis, tool)
+        self._restore_axis(restore_position, restore_axis, tool)
 
         self.gcode.run_script_from_command(
             "RESTORE_GCODE_STATE NAME=_toolchange_state MOVE=0")
