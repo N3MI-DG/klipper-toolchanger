@@ -14,12 +14,6 @@ class ToolProbeOffsetsHelper:
     def get_offsets(self, gcmd=None):
         return self.tool_probe_endstop.get_offsets(gcmd)
 
-    def create_probe_result(self, test_pos):
-        x_offset, y_offset, z_offset = self.tool_probe_endstop.get_offsets()
-        return manual_probe.ProbeResult(
-            test_pos[0]+x_offset, test_pos[1]+y_offset,
-            test_pos[2]-z_offset, test_pos[0], test_pos[1], test_pos[2])
-
 # Virtual endstop, using a tool attached Z probe in a toolchanger setup.
 # Tool endstop change may be done either via SET_ACTIVE_TOOL_PROBE TOOL=99
 # Or via auto-detection of single open tool probe via DETECT_ACTIVE_TOOL_PROBE
